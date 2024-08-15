@@ -6,7 +6,6 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -14,39 +13,27 @@ import (
 	"os"
 )
 
-func generateHMAC(payload, key string) string {
-	b := marshaler(payload)
-	str := strBuilder(b)
-
-	h := hmac.New(sha512.New, []byte(key))
-	h.Write([]byte(str))
-	msg := hex.EncodeToString(h.Sum(nil))
-	generatedSignature := base64.StdEncoding.EncodeToString([]byte(msg))
-
-	return generatedSignature
-}
-
 type RequestPayload struct {
 	TransactionDatetime string `json:"transaction_datetime"`
 	CustomerName        string `json:"customer_name"`
 	RequestID           string `json:"request_id"`
 }
 
-func marshaler(req string) RequestPayload {
-	result := RequestPayload{}
-	json.Unmarshal([]byte(req), &result)
-	return result
+func main() {
+	mux := http.NewServeMux()
+	mux.Handle("/", signatureChecker(http.HandlerFunc(handler)))
+
+	log.Println("Starting server on :8080")
+	if err := http.ListenAndServe("localhost:8080", mux); err != nil {
+		log.Fatal(err)
+	}
 }
 
-func strBuilder(req RequestPayload) string {
-	formattedString := fmt.Sprintf(
-		"%s:%s:%s",
-		req.RequestID,
-		req.CustomerName,
-		req.TransactionDatetime,
-	)
-	log.Println(formattedString)
-	return formattedString
+func generateHMAC(payload, key string) string {
+	h := hmac.New(sha512.New, []byte(key))
+	h.Write([]byte(payload))
+	msg := hex.EncodeToString(h.Sum(nil))
+	return base64.StdEncoding.EncodeToString([]byte(msg))
 }
 
 func signatureChecker(next http.Handler) http.Handler {
@@ -63,10 +50,11 @@ func signatureChecker(next http.Handler) http.Handler {
 		}
 
 		r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+		log.Println(os.Getenv("SECRET_SIGNATURE"))
 
 		expectedSignature := generateHMAC(string(body), os.Getenv("SECRET_SIGNATURE"))
-		fmt.Println("Expected", expectedSignature)
-		fmt.Println("From Request", signature)
+		log.Println("Expected", expectedSignature)
+		log.Println("From Request", signature)
 		if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
 			http.Error(w, "Invalid Signature", http.StatusForbidden)
 			return
@@ -78,14 +66,4 @@ func signatureChecker(next http.Handler) http.Handler {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Valid!")
-}
-
-func main() {
-	mux := http.NewServeMux()
-	mux.Handle("/", signatureChecker(http.HandlerFunc(handler)))
-
-	log.Println("Starting server on :8080")
-	if err := http.ListenAndServe("localhost:8080", mux); err != nil {
-		log.Fatal(err)
-	}
 }
